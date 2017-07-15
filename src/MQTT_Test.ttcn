@@ -1,0 +1,1073 @@
+module MQTT_Test {
+
+import from MQTT_v3_1_1_FTypes all;
+import from Mqtt_v3_1_1_IPL4SizeFunction all;
+import from IPL4asp_Types all;
+import from IPL4asp_PortType all;
+import from Socket_API_Definitions all;
+
+modulepar
+{
+  charstring tsp_remoteHost:="192.168.56.85"
+  integer    tsp_remotePort:=1883 
+}
+
+type component MTC_CT
+{ 
+  port IPL4asp_PT p;
+  timer t;   
+  var ASP_RecvFrom  v_ASP_RecvFrom; 
+  var ASP_Event    v_ASP_Event;
+  var IPL4asp_Types.Result  vl_result; 
+  var integer v_cid
+  var octetstring v_os
+  var MQTT_v3_1_1_FTypes.UCHAR0_65535 v_str
+  var IPL4asp_Types.Result  c_res:= { errorCode := omit, connId  := omit, os_error_code:=omit, os_error_text:= omit };  
+}
+
+type component SystemComp
+{
+  port IPL4asp_PT p;
+}
+
+
+//-------------------------------------------------------------------------------------------------------------------------------------
+
+template MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message t_F_connect(integer p_id) := {
+  msg := {
+    connect_msg := {
+      header := { packetType:='0001'B , flags := '0000'B, remLength:='00000000'O },
+      nameLength:=0,
+      name := "MQTT",
+      protocol_level := 4,
+      flags := {
+        user_name_flag := '0'B,
+     	  password_flag := '0'B,
+    	  will_retain := '0'B,
+    	  will_qos := AT_MOST_ONCE_DELIVERY,
+    	  will_flag := '0'B,
+    	  clean_session := '1'B,
+    	  reserved := '0'B
+      },
+      keep_alive := 20480, // Due to endiandness, 20480 represents 10
+      payload := {        
+      	client_identifier := {stringLength:=0, stringItem:="TTCN_FUN"&int2str(p_id)},
+      	will_topic := omit,
+      	will_message := omit,
+      	user_name := omit,
+      	password := omit
+      }
+    }
+  }
+}
+
+template MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message t_F_publish(
+    in charstring p_topic,
+    in template integer p_id,
+    in QoS p_qos) := {
+    msg := {
+      publish := {
+        header := {
+          packetType := '0011'B,
+          dup_flag := '0'B,
+          qos_level := p_qos,
+          retain_flag := '0'B,
+          remLength := '00000000'O
+        },
+        nameLength := 4,
+        topic_name := p_topic,
+        packet_identifier := p_id,
+        payload := char2oct("14.07 - it`s raining cats and dogs!")
+      }
+    }
+}
+
+template MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message t_F_subscribe(in charstring p_topic) := {
+    msg := {
+      subscribe := {
+        header := {
+          packetType := '1000'B,
+          flags := '0110'B,
+          remLength := '00000000'O
+        },
+        packet_identifier := 1,
+        payload := {
+          filterLength := 4,
+          topic_filter := p_topic,
+          requested_qos := AT_LEAST_ONCE_DELIVERY
+        }
+      }
+    }
+}
+
+template MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message t_F_pubrel (in integer pack_id):= {
+  msg := {
+    pubrel := {
+      header := { packetType:='1100'B , flags := '0010'B, remLength:='00000000'O },
+      packet_identifier := pack_id
+    }    
+  }
+}
+
+template MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message t_F_ping:= {
+  msg := {
+    pingreq := {
+      header := { packetType:='1100'B , flags := '0000'B, remLength:='00000000'O }
+    }
+  }
+}
+
+template  ASP_Send t_data_connect(in integer p_id ) := {
+  connId:=p_id,
+  proto:=omit,
+  msg:=f_MQTT_encode(valueof(t_F_connect(10)))
+}
+
+template  ASP_Send t_data_publish(in integer p_id ) := {
+  connId:=p_id,
+  proto:=omit,
+  msg:=f_MQTT_encode(valueof(t_F_publish("test", 1, AT_LEAST_ONCE_DELIVERY)))
+}
+
+template  ASP_Send t_data_pubrel(in integer p_id, in integer pack_id ) := {
+  connId:=p_id,
+  proto:=omit,
+  msg:=f_MQTT_encode(valueof(t_F_pubrel(pack_id)))
+}
+
+template  ASP_Send t_data_subscribe(in integer p_id ) := {
+  connId:=p_id,
+  proto:=omit,
+  msg:=f_MQTT_encode(valueof(t_F_subscribe("test")))
+}
+
+template  ASP_Send t_data_ping(in integer p_id ) := {
+  connId:=p_id,
+  proto:=omit,
+  msg:=f_MQTT_encode(valueof(t_F_ping))
+}
+
+function f_TCPConnect() runs on MTC_CT return Socket_API_Definitions.Result {
+  vl_result := c_res;
+  vl_result := f_IPL4_connect(p,tsp_remoteHost,tsp_remotePort,"",0,-1,{tcp := {} },{})
+
+  if (not(ispresent(vl_result.connId))) {
+    log("~~~~~ ERROR! Could not connect");
+    setverdict(fail);
+    stop
+  }
+  return vl_result
+}
+
+function f_MQTTSendConnect() runs on MTC_CT {
+  v_cid := vl_result.connId;
+
+//*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+//*************************************************************************
+
+  log("~~~~~ MQTT Encoded: ",t_data_connect(v_cid).msg)
+  log("~~~~~ MQTT connect ~~~~~> : ",f_MQTT_decode(valueof(t_data_connect(v_cid).msg) ))
+
+  p.send(t_data_connect(v_cid));
+
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("MQTT connect result <~~~~~ : ",f_MQTT_decode(v_ASP_RecvFrom.msg));
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var integer v_retCode := v_resp.msg.connack.connect_return_code;
+      log("~~~~~ The connect return code is: ", v_retCode);
+      if (v_retCode == 0)
+      {
+        log("~~~~~ Connection request accepted");
+      }
+      else
+      {
+        log("~~~~~ Connection request failed");
+        setverdict(fail)
+      }
+      
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent !!! ~~~~~" ,v_ASP_Event );
+      setverdict(fail)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+//*************************************************************************
+}
+
+
+
+function f_sendConnnect()  runs on MTC_CT { 
+  vl_result := c_res;
+  vl_result :=f_IPL4_connect(p,tsp_remoteHost,tsp_remotePort,"",0,-1,{tcp := {} },{})
+
+  if (not(ispresent(vl_result.connId))) {
+    log("~~~~~ ERROR! Could not connect ~~~~~");
+    setverdict(fail);
+    stop
+  } 
+
+  v_cid:=vl_result.connId 
+
+//*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+//*************************************************************************
+
+  p.send(t_data_connect(v_cid));
+
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ MQTT connect result <--- ",f_MQTT_decode(v_ASP_RecvFrom.msg) );
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var integer v_retCode := v_resp.msg.connack.connect_return_code;
+      log("~~~~~ The connect return code is: ", v_retCode);
+      if (v_retCode == 0)
+      {
+        log("~~~~~ Connection request accepted");
+      }
+      else
+      {
+        log(" ~~~~~ Connection request failed");
+        setverdict(fail)
+      }
+      
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(fail)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+  
+  vl_result := c_res;
+  vl_result :=    f_IPL4_close(p, v_cid)
+ 
+}
+
+
+/* MQTT-2.2.2
+Where a flag bit is marked as “Reserved” in Table 2.2 - Flag Bits, it is reserved
+for future use and MUST be set to the value listed in that table.
+If invalid flags are received, the receiver MUST close the Network Connection.
+*/
+
+testcase tc_2_2_2() runs on MTC_CT {
+  setverdict(pass);
+  map(self:p, system:p);
+  
+  vl_result := c_res;
+  vl_result := f_IPL4_connect(p,tsp_remoteHost,tsp_remotePort,"",0,-1,{tcp := {} },{})
+
+  if (not(ispresent(vl_result.connId))) {
+    log("~~~~~ ERROR! Could not connect");
+    setverdict(fail);
+    stop
+  } 
+
+  v_cid:=vl_result.connId;
+
+//*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+//*************************************************************************
+  
+  @update(t_F_connect) with {
+    // Update the header, so that it contains non-zero flags
+    erroneous (msg.connect_msg.header) "value := '1300000000'O "
+  }
+
+  log("~~~~~ MQTT Encoded: ",t_data_connect(v_cid).msg)
+  log("~~~~~ MQTT connect --------------------------->  :",f_MQTT_decode(valueof(t_data_connect(v_cid).msg) ))
+
+  p.send(t_data_connect(v_cid));
+
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ MQTT connect result <~~~~~ ",f_MQTT_decode(v_ASP_RecvFrom.msg) );
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var integer v_retCode := v_resp.msg.connack.connect_return_code;
+      log("~~~~~ The connect return code is: ", v_retCode);
+      if (v_retCode == 0)
+      {
+        log("~~~~~ Connection request accepted");
+        setverdict(fail)
+      }
+      else
+      {
+        log("~~~~~ Connection request failed");
+        setverdict(fail)
+      }
+      
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(pass)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+  @update(t_F_connect) with {
+    // Restore to defaults:
+    erroneous (msg.connect_msg.header) "value := '1000000000'O "
+  }
+
+  unmap(self:p, system:p);
+}
+
+/* MQTT-2.3.1-1
+SUBSCRIBE, UNSUBSCRIBE, and PUBLISH (in cases where QoS > 0) Control
+Packets MUST contain a non-zero 16-bit Packet Identifier.
+*/
+
+testcase tc_2_3_1_1() runs on MTC_CT {
+  
+  var QoS q_level := AT_LEAST_ONCE_DELIVERY;
+
+  @update(t_F_publish) with {
+    // Update the message with QoS 1, and Packet ID 0:
+    erroneous (msg.publish.header) "value := '3200000000'O "
+  }
+
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+
+
+  
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  f_MQTTSendConnect();
+
+  log("~~~~~ MQTT Encoded: ",t_data_publish(v_cid));
+  log("~~~~~ MQTT Encoded: ",t_data_publish(v_cid).msg);
+  log("Publish result ---------------------> ",f_MQTT_decode(valueof(t_data_publish(v_cid).msg)));
+
+  p.send(t_data_publish(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ MQTT publish result <~~~~~ ",f_MQTT_decode(v_ASP_RecvFrom.msg) );
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var BIT4n v_retType := v_resp.msg.puback.header.packetType;
+      log("~~~~~ The connect return message type is: ", v_retType);
+      if (v_retType == '0100'B )
+      {
+        log("~~~~~ Publish message with 0 packet ID accepted! ");
+        setverdict(fail)
+      }
+      else
+      {
+        log("~~~~~ Publish message rejected");
+        setverdict(fail)
+      }
+      
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(pass)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+  @update(t_F_publish) with {
+    // Restore to normal
+    erroneous (msg.publish.header) "value := '3000000000'O "
+  }
+
+  unmap(self:p, system:p);
+}
+
+/* MQTT-3.1.0-1a
+After a Network Connection is established by a Client to a Server, the first Packet
+sent from the Client to the Server MUST be a CONNECT Packet.
+*/
+
+testcase tc_3_1_0_1a() runs on MTC_CT {
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+  
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  log("~~~~~ MQTT Encoded: ",t_data_publish(v_cid));
+  log("~~~~~ MQTT Encoded: ",t_data_publish(v_cid).msg);
+  log("Publish result ---------------------> ",f_MQTT_decode(valueof(t_data_publish(v_cid).msg)));
+
+  p.send(t_data_publish(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ Received a response to a direct publish message...");
+      setverdict(fail)
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(pass)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+  unmap(self:p, system:p);
+
+}
+
+/* MQTT-3.1.0-1b
+After a Network Connection is established by a Client to a Server, the first Packet
+sent from the Client to the Server MUST be a CONNECT Packet.
+*/
+
+testcase tc_3_1_0_1b() runs on MTC_CT {
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+  
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  log("~~~~~ MQTT Encoded: ",t_data_ping(v_cid));
+  log("~~~~~ MQTT Encoded: ",t_data_ping(v_cid).msg);
+  log("Publish result ---------------------> ",f_MQTT_decode(valueof(t_data_ping(v_cid).msg)));
+
+  p.send(t_data_ping(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ Received a response to a direct PINGREQ message... ");
+      setverdict(fail)
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(pass)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+  unmap(self:p, system:p);
+}
+
+/* MQTT-3.1.0-2
+The Server MUST process a second CONNECT Packet sent from a Client as a
+protocol violation and disconnect the Client.
+*/
+testcase tc_3_1_0_2() runs on MTC_CT {
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+  
+  f_MQTTSendConnect();
+
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  log("~~~~~ MQTT Encoded: ",t_data_connect(v_cid));
+  log("~~~~~ MQTT Encoded: ",t_data_connect(v_cid).msg);
+  log("~~~~~ CONNECT result ~~~~~> ",f_MQTT_decode(valueof(t_data_connect(v_cid).msg)));
+
+  p.send(t_data_connect(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ Received a response to a second CONNECT message. It should have been rejected ...");
+      setverdict(fail)
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(pass)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+  unmap(self:p, system:p);
+}
+
+/* MQTT-3.1.2-2
+The Server MUST respond to the CONNECT Packet with a CONNACK return
+code 0x01 (unacceptable protocol level) and then disconnect the Client if the
+Protocol Level is not supported by the Server.
+*/
+testcase tc_3_1_2_2() runs on MTC_CT {
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  @update(t_F_connect) with {
+    // Update the header, so that it contains incorrect version
+    erroneous (msg.connect_msg.protocol_level) "value := 6 "
+  }
+
+  log("~~~~~ MQTT Encoded: ",t_data_connect(v_cid));
+  log("~~~~~ MQTT Encoded: ",t_data_connect(v_cid).msg);
+  log("~~~~~ Connect result ~~~~~> ",f_MQTT_decode(valueof(t_data_connect(v_cid).msg)));
+
+  p.send(t_data_connect(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+
+      log("~~~~~ MQTT connect result <~~~~~",f_MQTT_decode(v_ASP_RecvFrom.msg) );
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var INT0_255 v_retType := v_resp.msg.connack.connect_return_code;
+      log("~~~~~ The connect return message code is: ", v_retType);
+      if (v_retType == 1 )
+      {
+        log("~~~~~ CONNECT message with incorrect protocol version was rejected properly!");
+        setverdict(pass)
+      }
+      else
+      {
+        log("~~~~~ CONNECT message with incorrect protocol version NOT rejected properly!");
+        setverdict(fail)
+      }
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(fail)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+  @update(t_F_connect) with {
+    // Restore to normal
+    erroneous (msg.connect_msg.protocol_level) "value := 4 "
+  }
+  unmap(self:p, system:p);
+
+}
+
+/* MQTT-3.1.2-3
+The Server MUST validate that the reserved flag in the CONNECT Control
+Packet is set to zero and disconnect the Client if it is not zero.
+*/
+
+/* MQTT-3.1.2-24
+If the Keep Alive value is non-zero and the Server does not receive a Control
+Packet from the Client within one and a half times the Keep Alive time period, it
+MUST disconnect the Network Connection to the Client as if the network had
+failed.
+*/
+
+testcase tc_3_1_2_24() runs on MTC_CT {
+
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  f_MQTTSendConnect();
+
+//  p.send(t_data_ping(v_cid));
+  t.start(20.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ Received Unexpected message from server before the expiration of the keepalive timeout ");        
+      setverdict(fail)
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Server closed connection in the absence of message exchange (no keepalive) as it should have" ,v_ASP_Event );
+      setverdict(pass)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+  unmap(self:p, system:p);
+}
+
+
+/* MQTT-3.1.3-8
+If the Client supplies a zero-byte ClientId with CleanSession set to 0, the Server
+MUST respond to the CONNECT Packet with a CONNACK return code 0x02
+(Identifier rejected) and then close the Network Connection.
+*/ 
+testcase tc_3_1_3_8() runs on MTC_CT {
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  @update(t_F_connect) with {
+    // Produce the error
+    erroneous (msg.connect_msg.payload) "value := '0000'O ";
+    erroneous (msg.connect_msg.flags.clean_session) "value := '0'B ";
+  }
+
+  log("~~~~~ MQTT Encoded: ",t_data_connect(v_cid));
+  log("~~~~~ MQTT Encoded: ",t_data_connect(v_cid).msg);
+  log("~~~~~ CONNECT result ~~~~~> ",f_MQTT_decode(valueof(t_data_connect(v_cid).msg)));
+
+  p.send(t_data_connect(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ MQTT connect result <~~~~~ ",f_MQTT_decode(v_ASP_RecvFrom.msg) );
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var INT0_255 v_retType := v_resp.msg.connack.connect_return_code;
+      log("~~~~~ The connect return message code is: ", v_retType);
+      if (v_retType == 2 )
+      {
+        log("~~~~~ CONNECT message with incorrect combination of client ID and Retain flag was rejected properly!");
+        setverdict(pass)
+      }
+      else
+      {
+        log("~~~~~ CONNECT message with incorrect combination of client ID and Retain flag NOT rejected properly!");
+        setverdict(fail)
+      }
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(pass)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+  @update(t_F_connect) with {
+    // Restore to normal
+    erroneous (msg.connect_msg.payload) "value := '000A5454434E5F46554E3130'O ";
+    // Should be the Clean Session flag, but due to endiandness, its symmetric
+    // flag in the Byte does the job.
+    erroneous (msg.connect_msg.flags.password_flag) "value := '1'B ";
+  }
+
+  unmap(self:p, system:p);
+}
+
+/* MQTT-3.3.1-4
+A PUBLISH Packet MUST NOT have both QoS bits set to 1. If a Server or Client
+receives a PUBLISH Packet which has both QoS bits set to 1 it MUST close the
+Network Connection.
+*/
+testcase tc_3_3_1_4() runs on MTC_CT {
+  
+  //var QoS q_level := RESERVED;
+
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  f_MQTTSendConnect();
+
+  @update(t_F_publish) with {
+    // Update the message with QoS 2, and Packet ID 0:
+    erroneous (msg.publish.header) "value := '3600000000'O "
+  }
+
+  log("~~~~~ MQTT Encoded: ",t_data_publish(v_cid));
+  log("~~~~~ MQTT Encoded: ",t_data_publish(v_cid).msg);
+  log("~~~~~ PUBLISH result ~~~~~> ",f_MQTT_decode(valueof(t_data_publish(v_cid).msg)));
+
+  p.send(t_data_publish(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ MQTT publish result <~~~~~ ",f_MQTT_decode(v_ASP_RecvFrom.msg) );
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var BIT4n v_retType := v_resp.msg.puback.header.packetType;
+      log("~~~~~ The connect return message type is:", v_retType);
+      if (v_retType == '0100'B )
+      {
+        log("~~~~~ Publish message with 0 packet ID accepted, when it shouldn`t have been.");
+        setverdict(fail)
+      }
+      else
+      {
+        log("~~~~~ Publish message with 0 packet ID rejected. OK. ");
+        setverdict(pass)
+      }
+      
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(pass)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+  @update(t_F_publish) with {
+    // Restore the defaults:
+    erroneous (msg.publish.header) "value := '3000000000'O "
+  }
+
+  unmap(self:p, system:p);
+}
+
+/* MQTT-3.6.1-1
+Bits 3,2,1 and 0 of the fixed header in the PUBREL Control Packet are reserved
+and MUST be set to 0,0,1 and 0 respectively. The Server MUST treat any other
+value as malformed and close the Network Connection.
+*/
+testcase tc_3_6_1_1() runs on MTC_CT {
+
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  f_MQTTSendConnect();
+
+  var INT_BIT16_MSB v_msg_id := 100;
+
+  @update(t_F_publish) with {
+    // Update the message with QoS 2, and Packet ID 100:
+    erroneous (msg.publish.packet_identifier) "value := v_msg_id";
+    erroneous (msg.publish.header) "value := '3400000000'O "
+  }
+
+  @update(t_F_pubrel) with {
+    // Update the Flags in the Header:
+    erroneous (msg.pubrel.header) "value := '6000000000'O "
+  }
+
+  p.send(t_data_publish(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ MQTT publish result <~~~~~",f_MQTT_decode(v_ASP_RecvFrom.msg) );
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var BIT4n v_retType := v_resp.msg.pubrec.header.packetType;
+      log("~~~~~ The connect return message type is: ", v_retType);
+      if (v_retType == '0101'B )
+      {
+        log("~~~~~ PUBLISH message  accepted. Send erroneous PUBREL");
+
+        p.send(t_data_pubrel(v_cid,9728));
+        t.start(1.0)
+        alt {
+          [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom{
+            log("~~~~~ Server did not close the connection!!! ~~~~~" ,v_ASP_Event );
+            setverdict(fail)
+          }
+          [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+            log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+            setverdict(pass)
+          }
+          [] t.timeout {
+            log("~~~~~ No answer received. Bye. ~~~~~");
+            setverdict(fail)
+          }
+        }
+      }
+      else
+      {
+        log("~~~~~ PUBLISH message rejected");
+        setverdict(fail)
+      }
+      
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(fail)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+  @update(t_F_publish) with {
+    // Restore the defaults:
+    erroneous (msg.publish.header) "value := '3000000000'O "
+  }
+
+  @update(t_F_pubrel) with {
+    // Update the Flags in the Header:
+    erroneous (msg.publish.header) "value := '6200000000'O "
+  }
+
+  unmap(self:p, system:p);
+}
+
+/* MQTT-3.8.1-1
+Bits 3,2,1 and 0 of the fixed header of the SUBSCRIBE Control Packet are
+reserved and MUST be set to 0,0,1 and 0 respectively. The Server MUST treat
+any other value as malformed and close the Network Connection.
+*/
+testcase tc_3_8_1_1() runs on MTC_CT {
+
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  f_MQTTSendConnect();
+
+  @update(t_F_subscribe) with {
+    // Update the message with incorrect header flags:
+    erroneous (msg.subscribe.header) "value := '8100000000'O "
+  }
+
+  p.send(t_data_subscribe(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ MQTT subscribe result <~~~~~",f_MQTT_decode(v_ASP_RecvFrom.msg) );
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var BIT4n v_retType := v_resp.msg.suback.header.packetType;
+      log("~~~~~ The connect return message type is:", v_retType);
+      if (v_retType == '1001'B )
+      {
+        log("~~~~~ SUBSCRIBE message with erroneous values accepted");        
+        setverdict(fail)
+      }
+      else
+      {
+        log("~~~~~ Subscribe message rejected, but the connection should have been closed!");
+        setverdict(fail)
+      }
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(pass)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+  @update(t_F_subscribe) with {
+    // Restore to normal:
+    erroneous (msg.subscribe.header) "value := '8200000000'O "
+  }
+
+  unmap(self:p, system:p);
+}
+
+/* MQTT-3.8.3-4
+The Server MUST treat a SUBSCRIBE packet as malformed and close the
+Network Connection if any of Reserved bits in the payload are non-zero, or QoS
+is not 0,1 or 2.
+*/
+testcase tc_3_8_3_4() runs on MTC_CT {
+
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  f_MQTTSendConnect();
+
+  @update(t_F_subscribe) with {
+    // Update the message with incorrect header flags:
+    erroneous (msg.subscribe.payload) "value := '00048475737411'O "
+  }
+
+  p.send(t_data_subscribe(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ MQTT subscribe result <~~~~~",f_MQTT_decode(v_ASP_RecvFrom.msg) );
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var BIT4n v_retType := v_resp.msg.suback.header.packetType;
+      log("~~~~~ The SUBSCRIBE return message type is:", v_retType);
+      if (v_retType == '1001'B )
+      {
+        log("~~~~~ Subscribe message accepted");        
+        setverdict(fail)
+      }
+      else
+      {
+        log("~~~~~ Subscribe message rejected, but the connection should have been closed!");
+        setverdict(fail)
+      }
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(pass)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+  @update(t_F_subscribe) with {
+    // Restore to normal:
+    erroneous (msg.subscribe.payload) "value := '00047465737401'O "
+  }
+
+  unmap(self:p, system:p);
+}
+
+/* [MQTT-3.12.4-1]
+The Server MUST send a PINGRESP Packet in response to a PINGREQ Packet
+*/
+testcase tc_3_12_4_1() runs on MTC_CT {
+
+  setverdict(pass);
+  map(self:p, system:p);
+  vl_result := f_TCPConnect();
+  v_cid:=vl_result.connId;
+  log("~~~~~ TCP Connection was successful! ~~~~~");
+
+  //*************************************************************************
+  var f_IPL4_getMsgLen getMsg_Func := refers(f_GetMsgLengthMQTT);
+  f_IPL4_setGetMsgLen(p,v_cid, getMsg_Func, {});
+  //*************************************************************************
+
+  f_MQTTSendConnect();
+
+  p.send(t_data_ping(v_cid));
+  t.start(1.0) 
+  alt {
+    [] p.receive(ASP_RecvFrom:?) -> value v_ASP_RecvFrom {
+      log("~~~~~ MQTT ping result <~~~~~",f_MQTT_decode(v_ASP_RecvFrom.msg) );
+      var MQTT_v3_1_1_FTypes.MQTT_v3_1_1_Message v_resp := f_MQTT_decode(v_ASP_RecvFrom.msg);
+      var BIT4n v_retType := v_resp.msg.pingresp.header.packetType;
+      log("~~~~~ The ping return message type is:", v_retType);
+      if (v_retType == '1101'B )
+      {
+        log("~~~~~ Received Ping Response");        
+        setverdict(pass)
+      }
+      else
+      {
+        log("~~~~~ Received something different than Ping Reponse. Bad! ");
+        setverdict(fail)
+      }
+    };
+    [] p.receive(ASP_Event:?) -> value v_ASP_Event {
+      log("~~~~~ Unexpected ASPEvent  !!!~~~~~" ,v_ASP_Event );
+      setverdict(fail)
+    };
+    [] t.timeout {
+      log("~~~~~ No answer received. Bye. ~~~~~");
+      setverdict(fail)
+    }
+  }
+
+  unmap(self:p, system:p);
+}
+
+
+control {
+  timer time; time.start(1.0); time.timeout;
+  execute(tc_2_2_2());
+  time.start(1.0); time.timeout;
+  execute(tc_2_3_1_1());
+  time.start(1.0); time.timeout;
+  execute(tc_3_1_0_1a());
+  time.start(1.0); time.timeout;
+  execute(tc_3_1_0_1b());
+  time.start(1.0); time.timeout;
+  execute(tc_3_1_0_2());
+  time.start(1.0); time.timeout;
+  execute(tc_3_1_2_2());
+  time.start(1.0); time.timeout;
+  execute(tc_3_1_2_24());
+  time.start(1.0); time.timeout;
+  execute(tc_3_1_3_8());
+  time.start(1.0); time.timeout;
+  execute(tc_3_3_1_4());
+  time.start(1.0); time.timeout;
+  execute(tc_3_6_1_1());
+  time.start(1.0); time.timeout;
+  execute(tc_3_8_1_1());
+  time.start(1.0); time.timeout;
+  execute(tc_3_8_3_4());
+  time.start(1.0); time.timeout;
+  execute(tc_3_12_4_1());
+
+}//endcontrol
+
+}//endmodule
+  

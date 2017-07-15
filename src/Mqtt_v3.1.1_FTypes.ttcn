@@ -1,0 +1,410 @@
+/******************************************************************************
+* Copyright (c) 2016  Ericsson AB
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Eclipse Public License v1.0
+* which accompanies this distribution, and is available at
+* http://www.eclipse.org/legal/epl-v10.html
+*
+* Contributors:
+*  Mate Kovacs - initial implementation and initial documentation
+*  Elemer Lelik
+******************************************************************************/
+//
+//  File:               Mqtt_v3.1.1_FTypes.ttcn
+//  Rev:                R1A
+//  Prodnr:             CNL 113 831 
+
+module MQTT_v3_1_1_FTypes
+{
+
+external function f_MQTT_enc(in MQTT_v3_1_1_Message msg) return octetstring
+with { extension "prototype(convert) encode(RAW)" };
+
+
+external function f_MQTT_dec(in octetstring  stream) return MQTT_v3_1_1_Message
+with { extension "prototype(convert) decode(RAW)" };
+
+
+function f_MQTT_decode(in octetstring  msg) return MQTT_v3_1_1_Message
+{
+  return f_MQTT_dec(f_trimLength(msg))
+}
+
+
+function f_MQTT_encode(in MQTT_v3_1_1_Message msg) return octetstring
+{
+  return f_adjustLength(f_MQTT_enc(msg))
+}
+
+function f_trimLength(in octetstring p_os) return octetstring
+{
+
+//decoding expects remLength of 4 bytes ; anything shorter will b4 completed to 4 bytes 
+
+  var octetstring v_os:=''O;
+  var integer v_l:= lengthof(p_os) //unadjusted length 
+
+
+  //log(p_os)
+  //log(v_l)
+
+  //X Y 0N--127N
+
+  if((v_l >=0+2) and (v_l<=127+2))//1 octet for length
+  {
+    v_os:= substr(p_os,0,1)&'000000'O&substr(p_os,1,v_l-1 )
+  }
+  else if ((v_l >= 128+2) and (v_l <=16383+2 )) //2 octets for length
+  {
+    v_os:= substr(p_os,0,1)&'0000'O&substr(p_os,1,v_l-1 )
+  }
+  else if ((v_l >= 16384+2) and (v_l <=2097151+2 ))//3 octets for length
+  {
+
+    v_os:= substr(p_os,0,1)&'00'O&substr(p_os,1,v_l-1 )
+  }
+
+  else if ((v_l >= 2097152+2) and (v_l <=268435455+2 ))//4 octets for length
+  {
+
+    v_os:=p_os
+  }
+
+  else {}
+
+  //log(v_os)
+  return v_os
+}
+
+
+
+function f_adjustLength(in octetstring p_os) return octetstring
+{
+
+//encoding will produce a remLength of 4 bytes;
+//this will be adjusted to  1, 2, 3 or 4 bytes as needed
+
+
+
+  //X YYYY NNNNNNNNNN
+  var octetstring v_os
+  var OCT4_MSB v_los //adjusted length stored on 4 bytes
+  var integer v_l:= lengthof(p_os) //unadjusted length 
+
+
+  if ((v_l >= 0) and (v_l <=127))
+  {
+
+    //log(p_os)
+    //log(v_l)
+    v_los:=int2oct(v_l-3-2,4)
+    p_os[1]:=v_los[0]
+    p_os[2]:=v_los[1]
+    p_os[3]:=v_los[2]
+    p_os[4]:=v_los[3]
+
+    //log(v_los)
+    v_os:= substr(p_os,0,1)&substr(p_os,4,v_l-4 )
+
+    //log(v_os)
+  }   
+  else if ((v_l >= 128) and (v_l <=16383 ))
+
+  {
+    v_los:=int2oct(v_l-2-2,4)
+    p_os[1]:=v_los[0]
+    p_os[2]:=v_los[1]
+    p_os[3]:=v_los[2]
+    p_os[4]:=v_los[3]
+
+
+    v_os:= substr(p_os,0,1)&substr(p_os,3,v_l-3 )
+  }
+
+  else if ((v_l >= 16384) and (v_l <=2097151 ))
+  {
+
+    v_los:=int2oct(v_l-1-2,4)
+    p_os[1]:=v_los[0]
+    p_os[2]:=v_los[1]
+    p_os[3]:=v_los[2]
+    p_os[4]:=v_los[3]
+
+    v_os:= substr(p_os,0,1)&substr(p_os,2,v_l-3 )
+  }
+  else if ((v_l >= 2097152) and (v_l <=268435455 ))
+  {
+    v_los:=int2oct(v_l,4)
+    p_os[1]:=v_los[0]
+    p_os[2]:=v_los[1]
+    p_os[3]:=v_los[2]
+    p_os[4]:=v_los[3]
+
+
+    v_os:=p_os
+  }
+
+  else {}
+
+  return v_os
+}
+
+type octetstring OCT0_65535   length(0..65535) with {variant "" };
+
+type octetstring OCT1_MSB length(1) with { variant "FIELDLENGTH(1),BITORDER(msb)" };
+type octetstring OCT2_MSB length(2) with { variant "FIELDLENGTH(2),BITORDER(lsb)" };//!!!
+type octetstring OCT4_MSB length(4) with { variant "FIELDLENGTH(4),BITORDER(msb)" };
+
+type universal charstring UCHAR0_65535    length(0..65535)  with {variant "" };
+type bitstring BIT1n length(1);
+type bitstring BIT4n length(4)  with {variant "" };
+type integer INT0_255 (0..255)  with {variant "" };
+type integer INT_BIT16_MSB  (0..65335)      with { variant "FIELDLENGTH(16),BITORDER(msb)" };
+type integer INT_BIT16_LSB  (0..65335)      with { variant "FIELDLENGTH(16),BITORDER(lsb)" };
+
+
+type enumerated QoS
+{
+  AT_MOST_ONCE_DELIVERY(0),
+  AT_LEAST_ONCE_DELIVERY(1),
+  EXACTLY_ONE_DELIVERY(2),
+  RESERVED(3)
+} with {variant "FIELDLENGTH(2)" 
+
+}
+
+type record Header
+{
+  BIT4n                         packetType, 
+  BIT4n                         flags,
+  OCT4_MSB                      remLength 
+} with {
+  variant "FIELDORDER(msb)";
+//  variant (flags) "BITORDERINFIELD(msb)" ;
+
+}
+
+
+
+type record MQTT_v3_1_1_ConnectFlags
+{
+  BIT1n                         user_name_flag,
+  BIT1n                         password_flag,
+  BIT1n                         will_retain,
+  QoS                           will_qos,
+  BIT1n                         will_flag,
+  BIT1n                         clean_session,
+  BIT1n                         reserved
+} with {variant "FIELDORDER(msb)" 
+
+}
+
+type record UTF8EncodedString
+{
+  INT_BIT16_MSB     stringLength,
+  UCHAR0_65535      stringItem
+} with {variant "FIELDORDER(msb)" 
+  variant (stringLength) "BITORDERINFIELD(msb)" ;
+  variant (stringLength) "LENGTHTO(stringItem)" ;
+}
+
+type record OctStringWithLength
+{
+  INT_BIT16_MSB     stringLength,
+  OCT0_65535        stringItem
+} with {variant "FIELDORDER(msb)" 
+  variant (stringLength) "BITORDERINFIELD(msb)" ;
+  variant (stringLength) "LENGTHTO(stringItem)" ;
+}
+
+
+
+type record MQTT_v3_1_1_ConnectPayload
+{
+
+  UTF8EncodedString             client_identifier,
+  UTF8EncodedString             will_topic optional,
+  OctStringWithLength           will_message optional,
+  UTF8EncodedString             user_name optional,
+  OctStringWithLength           password optional
+} with {variant "FIELDORDER(msb)" 
+
+}
+
+
+type record MQTT_v3_1_1_Connect
+{
+  Header                        header,
+  INT_BIT16_MSB                 nameLength,
+  UCHAR0_65535                  name,
+  INT0_255                      protocol_level,
+  MQTT_v3_1_1_ConnectFlags      flags,
+  INT_BIT16_MSB                 keep_alive,
+  MQTT_v3_1_1_ConnectPayload    payload
+} with {variant "FIELDORDER(msb)" ;
+  variant (nameLength) "BITORDERINFIELD(msb)" ;
+  variant (nameLength) "LENGTHTO(name)" ;
+  variant (keep_alive) "BITORDERINFIELD(lsb)" ;
+
+}
+
+type record MQTT_v3_1_1_Connack
+{
+  Header                        header,
+  INT0_255                      session_present_flag (0..1),
+  INT0_255                      connect_return_code
+}with {variant "FIELDORDER(msb)" 
+  variant (session_present_flag) "BITORDERINFIELD(msb)" 
+  variant (connect_return_code) "BITORDERINFIELD(lsb)" 
+}
+
+type record MQTT_v3_1_1_PublishHeader
+
+{
+  BIT4n                         packetType, 
+  BIT1n                         dup_flag,
+  QoS                           qos_level,
+  BIT1n                         retain_flag,
+  OCT4_MSB                      remLength 
+}
+with {
+  variant "FIELDORDER(msb)"
+}  
+
+type record MQTT_v3_1_1_Publish
+{
+  MQTT_v3_1_1_PublishHeader     header,
+  INT_BIT16_MSB                 nameLength,
+  UCHAR0_65535                  topic_name,
+  INT_BIT16_MSB                 packet_identifier optional,
+  octetstring                   payload
+} with {
+  variant "FIELDORDER(msb)" ;
+  variant (packet_identifier) "BITORDERINFIELD(msb)" ;
+  variant (nameLength) "BITORDERINFIELD(msb)" ;
+  variant (nameLength) "LENGTHTO(topic_name)";
+  //  variant (header.remLength) "LENGTHTO(nameLength,topic_name,packet_identifier,payload)";         
+}
+
+type record MQTT_v3_1_1_Identifier
+{
+  Header                        header,
+  INT_BIT16_MSB                 packet_identifier
+}
+with {variant "FIELDORDER(msb)" ;
+  variant (header.remLength) "LENGTHTO(packet_identifier)" ;
+  variant (packet_identifier) "BITORDERINFIELD(msb)" 
+}
+
+type record MQTT_v3_1_1_SubscribePayload
+{
+  INT_BIT16_MSB                 filterLength,
+  UCHAR0_65535                  topic_filter,
+  QoS                           requested_qos
+}with {variant "FIELDORDER(msb)"; 
+  variant (filterLength) "BITORDERINFIELD(msb)" ;
+  variant (filterLength) "LENGTHTO(topic_filter)";
+  variant (requested_qos) "BITORDERINFIELD(msb)" ; 
+  variant (requested_qos) "FIELDLENGTH(8)" ; 
+  variant (requested_qos) "BITORDER(msb)" ; 
+}
+
+type record of MQTT_v3_1_1_SubscribePayload MQTT_v3_1_1_SubscribePayloadList with {variant "" };
+
+type record MQTT_v3_1_1_Subscribe
+{
+  Header                              header,
+  INT_BIT16_MSB                       packet_identifier ,
+  //MQTT_v3_1_1_SubscribePayloadList    payload
+  MQTT_v3_1_1_SubscribePayload        payload
+} with {variant "FIELDORDER(msb)" 
+  variant (packet_identifier) "BITORDERINFIELD(msb)" 
+}
+
+type record of INT0_255 IntegerList with {variant "" };
+
+type record MQTT_v3_1_1_SubackPayload
+{
+  IntegerList                   return_code
+}with {variant "" 
+
+}
+
+type record MQTT_v3_1_1_Suback
+{
+  Header                        header,
+  INT_BIT16_MSB                 packet_identifier ,
+  MQTT_v3_1_1_SubackPayload     payload
+}with {variant "FIELDORDER(msb)" 
+  variant (packet_identifier) "BITORDERINFIELD(msb)" 
+}
+
+
+
+type record MQTT_v3_1_1_UnsubscribePayload
+{
+  INT_BIT16_MSB                 filterLength,
+  UCHAR0_65535                  topic_filter
+}with {variant "FIELDORDER(msb)" ;
+  variant (filterLength) "BITORDERINFIELD(msb)" ;
+  variant (filterLength) "LENGTHTO(topic_filter)" 
+}
+
+type record of MQTT_v3_1_1_UnsubscribePayload MQTT_v3_1_1_UnsubscribePayloadList with {variant "" };
+
+type record MQTT_v3_1_1_Unsubscribe
+{
+  Header                                  header,
+  INT_BIT16_MSB                           packet_identifier ,
+  MQTT_v3_1_1_UnsubscribePayloadList      payload
+}with { 
+  variant "FIELDORDER(msb)" ;
+  variant (packet_identifier) "BITORDERINFIELD(msb)" 
+
+}
+
+type record MQTT_v3_1_1_Empty
+{
+  Header                              header
+}with {variant ""  }
+
+type union MQTT_v3_1_1_ReqResp
+{
+  MQTT_v3_1_1_Connect           connect_msg,
+  MQTT_v3_1_1_Connack           connack,
+  MQTT_v3_1_1_Publish           publish,
+  MQTT_v3_1_1_Identifier        puback,
+  MQTT_v3_1_1_Identifier        pubrec,
+  MQTT_v3_1_1_Identifier        pubrel,
+  MQTT_v3_1_1_Identifier        pubcomp,
+  MQTT_v3_1_1_Subscribe         subscribe,
+  MQTT_v3_1_1_Suback            suback,
+  MQTT_v3_1_1_Unsubscribe       unsubscribe,
+  MQTT_v3_1_1_Identifier        unsuback,
+  MQTT_v3_1_1_Empty             pingreq,
+  MQTT_v3_1_1_Empty             pingresp,
+  MQTT_v3_1_1_Empty             disconnect_msg
+}with { variant "TAG(
+  connect_msg,        header.packetType = '0001'B;   
+  connack,           header.packetType = '0010'B;   
+  publish,   header.packetType = '0011'B;   
+  puback,   header.packetType = '0100'B;   
+  pubrec,  header.packetType = '0101'B;   
+  pubrel,   header.packetType = '0110'B;   
+  pubcomp,      header.packetType = '0111'B;   
+  subscribe,     header.packetType = '1000'B;   
+  suback,      header.packetType = '1001'B;   
+  unsubscribe,  header.packetType = '1010'B;   
+  unsuback,  header.packetType = '1011'B;   
+  pingreq,   header.packetType = '1100'B;   
+  pingresp,      header.packetType = '1101'B;   
+  disconnect_msg,    header.packetType = '1110'B; )"
+}
+
+type union MQTT_v3_1_1_Message
+{
+  MQTT_v3_1_1_ReqResp           msg,
+  octetstring                   raw_message
+}with {variant "" }
+
+}with {encode "RAW" }
